@@ -1,37 +1,182 @@
-var express = require('express');
-var router = express.Router();
-var ssr = require("./ssr.js");
+const express = require('express')
+const Cacheman = require('cacheman')
+const CachemanFile = require('cacheman-file')
+const router = express.Router()
+const ssr = require("./ssr.js")
+const config = require('./config')
 
-const instance = [];
-const queue = [];
-checkLoop(2, queue, instance);
-console.log('start check')
+const factorytList = [] // 正在渲染的页面
+let requestList = [] // 等待渲染的页面
+const cache = new Cacheman('htmls', {
+  engine: 'file'
+}) // 缓存
 
 router.get("/*", async (req, res, next) => {
-  queue.push({req, res, next});
-});
+  req._pageConfig = getPageConfig(req)
+  // 如果没有相关配置返回错误
+  if (!req._pageConfig) {
+    endRequest(res, {
+      status: 404
+    })
+    return
+  }
+  // 先检查缓存
+  const html = await getCachePage(req, cache)
+  // 缓存里有就直接返回
+  if (html) {
+    console.log('cache page: ', req._pageConfig.url)
+    endRequest(res, {
+      html
+    })
+  } else { // 否则放入渲染等待队列
+    requestList.push({req, res, next})
+    assignPage()
+  }
+})
 
-module.exports = router;
+module.exports = router
 
-function checkLoop(n, queue, instance) {
-  setTimeout(() => {
-    if (queue.length && instance.length < n) {
-      renderPage(queue.shift(), instance);
-      console.info('render:' + queue.length, 'instance:' + instance.length)
-    }
-    checkLoop(n, queue, instance);
-  }, 100);
+/**
+ * 分配页面渲染
+ */
+function assignPage() {
+  if (requestList.length && factorytList.length < config.pages) {
+    renderPage(requestList.shift(), factorytList)
+    console.info('render:' + requestList.length, 'factorytList:' + factorytList.length)
+  }
 }
 
-async function renderPage(request, instance) {
-  const { html, ttRenderMs } = await ssr(
-    `${request.req.protocol}://${request.req.get('host')}:8081${request.req.originalUrl}`,
-    instance
-  );
+/**
+ * 检查缓存
+ * @param {*} req 
+ * @param {*} cache 
+ */
+async function getCachePage(req, cache) {
+  const pageConfig = req._pageConfig
+  let result = null
+  try {
+    result = await cache.get(pageConfig.url)
+  } catch (e) {
+    console.log(e)
+  }
+  // 过期或者版本不合，缓存失效
+  if (result
+    && (result.createTime + result.expire * 1000 < Date.now()
+      || (result.version !== pageConfig.version)
+    )) {
+    result = null
+    try {
+      await cache.del(pageConfig.url)
+    } catch (e) {
+      console.log(e)
+    }
+  }
+  return result ? result.html : null
+}
+
+/**
+ * 存到缓存
+ * @param {*} req 
+ */
+async function setCachePage(req, cache, html) {
+  const pageConfig = req._pageConfig
+  try {
+    // 有期限才缓存
+    if (pageConfig.expire) {
+      await cache.set(pageConfig.url, {
+        createTime: Date.now(),
+        expire: pageConfig.expire,
+        version: pageConfig.version,
+        html
+      })
+    }
+    return true
+  } catch (e) {
+    console.log(e)
+    return false
+  }
+}
+
+/**
+ * 获取页面配置
+ * @param {*} req 
+ */
+function getPageConfig(req) {
+  const host = config.hosts[req.get('host')]
+  if (host && host.proxyHost) {
+    const pageConfig = {
+      url: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+      version: host.version || '',
+      expire: host.expire,
+      proxyHost: host.proxyHost
+    }
+    return pageConfig
+  } else {
+    return false
+  }
+}
+
+/**
+ * 渲染页面
+ * @param {*} request 
+ */
+async function renderPage(request) {
+  const pageConfig = request.req._pageConfig
+  let html = ''
+  let ttRenderMs = ''
+  let start = Date.now()
+  factorytList.push(start)
+
+  const result = await ssr(
+    `${request.req.protocol}://${pageConfig.proxyHost}${request.req.originalUrl}`,
+    pageConfig
+  )
+
+  factorytList.map((item, index) => {
+    if (item === start) {
+      ttRenderMs = Date.now() - start
+      factorytList.splice(index, 1)
+    }
+  })
+
+  html = result.html
+  // 结束本次请求
+  endRequest(request.res, {
+    url: pageConfig.url,
+    html,
+    ttRenderMs
+  })
+  // 尝试缓存
+  setCachePage(request.req, cache, html)
+  // 队列中相同请求一并返回
+  requestList = requestList.filter(item => {
+    if (item.req._pageConfig.url === pageConfig.url) {
+      endRequest(item.res, {
+        html,
+        ttRenderMs
+      })
+      return false
+    }
+    return true
+  })
+  // 检查是否还有需要渲染的页面
+  assignPage()
+  return
+}
+
+
+/**
+ * 结束请求
+ * @param {*} res 
+ * @param {object} options
+ */
+function endRequest(res, options = {}) {
+  console.info(`Headless rendered page in: ${options.ttRenderMs || 0}ms`);
+  const defaultHtml = '<h1>error</h1>'
   // Add Server-Timing! See https://w3c.github.io/server-timing/.
-  request.res.set(
+  res.set(
     "Server-Timing",
-    `Prerender;dur=${ttRenderMs};desc="Headless render time (ms)"`
-  );
-  return request.res.status(200).send(html); // Serve prerendered page as response.
+    `Prerender;dur=${options.ttRenderMs || 0};desc="Headless render time (ms)"`
+  )
+  return res.status(options.status || 200).send(options.html || defaultHtml) // Serve prerendered page as response.
 }

@@ -5,12 +5,14 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "pm2 start app.js --name='ssr' --watch"
+    "start": "pm2 start pm2.config.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "cacheman": "^2.2.1",
+    "cacheman-file": "^0.2.1",
     "express": "^4.16.3",
     "puppeteer": "^2.1.1"
   }
