@@ -1,5 +1,5 @@
-var puppeteer = require("puppeteer");
-var util = require('./util')
+const puppeteer = require("puppeteer");
+const util = require('./util')
 
 // 存储browsweWSendpoint
 let WS = null
@@ -30,19 +30,19 @@ async function ssr(url, pageConfig) {
   
   const page = await browser.newPage();
   // 1. Intercept network requests.
-  // await page.setRequestInterception(true);
+  await page.setRequestInterception(true);
 
-  // page.on('request', req => {
-  //   // 2. Ignore requests for resources that don't produce DOM
-  //   // (images, stylesheets, media).
-  //   const whitelist = ['document', 'script', 'xhr', 'fetch'];
-  //   if (!whitelist.includes(req.resourceType())) {
-  //     return req.abort();
-  //   }
+  page.on('request', req => {
+    // 2. Ignore requests for resources that don't produce DOM
+    // (images, stylesheets, media).
+    const whitelist = ['document', 'script', 'xhr', 'fetch'];
+    if (!whitelist.includes(req.resourceType())) {
+      return req.abort();
+    }
 
-  //   // 3. Pass through all other requests.
-  //   req.continue();
-  // });
+    // 3. Pass through all other requests.
+    req.continue();
+  });
   try {
     // util.waitForNetworkIdle 等待网络请求完成
     await Promise.all([

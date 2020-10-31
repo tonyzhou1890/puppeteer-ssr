@@ -4,6 +4,7 @@ const CachemanFile = require('cacheman-file')
 const router = express.Router()
 const ssr = require("./ssr.js")
 const config = require('./config')
+const util = require('./util')
 
 const factorytList = [] // 正在渲染的页面
 let requestList = [] // 等待渲染的页面
@@ -13,7 +14,7 @@ const cache = new Cacheman('htmls', {
 
 router.get("/*", async (req, res, next) => {
   console.log(req.originalUrl)
-  req._pageConfig = getPageConfig(req)
+  req._pageConfig = util.getPageConfig(req, config)
   // 如果没有相关配置返回错误
   if (!req._pageConfig) {
     endRequest(res, {
@@ -99,26 +100,6 @@ async function setCachePage(req, cache, html) {
 }
 
 /**
- * 获取页面配置
- * @param {*} req 
- */
-function getPageConfig(req) {
-  const host = config.hosts[req.get('host')]
-  if (host && host.proxyHost) {
-    const pageConfig = {
-      url: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
-      version: host.version || '',
-      expire: host.expire,
-      proxyHost: host.proxyHost,
-      waitForNetworkIdleTime: host.waitForNetworkIdleTime === undefined ? 300 : host.waitForNetworkIdleTime, // 默认等待 300 毫秒
-    }
-    return pageConfig
-  } else {
-    return false
-  }
-}
-
-/**
  * 渲染页面
  * @param {*} request 
  */
@@ -144,6 +125,7 @@ async function renderPage(request) {
   html = result.html
   // 结束本次请求
   endRequest(request.res, {
+    version: pageConfig.version,
     url: pageConfig.url,
     html,
     ttRenderMs
