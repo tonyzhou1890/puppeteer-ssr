@@ -10,9 +10,9 @@ let WS = null
  * @param {*} pageConfig
  */
 async function ssr(url, pageConfig) {
-  console.log("url", url)
-
+  let renderError = false // 渲染是否出错
   let browser = null
+  let html = '' // 渲染结果
   if (WS) {
     browser = await puppeteer.connect({ browserWSEndpoint: WS })
   } else {
@@ -44,30 +44,36 @@ async function ssr(url, pageConfig) {
   //   req.continue();
   // });
   try {
-    // networkidle0 waits for the network to be idle (no requests for 500ms).
-    // The page's JS has likely produced markup by this point, but wait longer
-    // if your site lazy loads, etc.
-    // await page.goto(url, { waitUntil: "networkidle0" });
+    // util.waitForNetworkIdle 等待网络请求完成
     await Promise.all([
       page.goto(url, {
         timeout: 5000
       }),
-      util.waitForNetworkIdle(page, 300, 0)
+      util.waitForNetworkIdle(page, pageConfig.waitForNetworkIdleTime, 0)
     ])
   } catch (err) {
     console.error(err);
     await page.close();
-    throw new Error("page.goto/waitForSelector timed out.");
+    await browser.close()
+    
+    ws = null
+    renderError = true
+    // throw new Error("page.goto/waitForSelector timed out.");
   }
 
-  let html = await page.content(); // serialized HTML of page DOM.
-  await page.close();
-  await browser.disconnect()
+  // 检查渲染是否出错
+  if (renderError) {
+    html = '<h1>发生了一些错误，请待会再试！</h1>'
+  } else {
+    html = await page.content(); // serialized HTML of page DOM.
+    await page.close();
+    await browser.disconnect()
 
-  // 解决闪屏
-  html = html.replace('id="app"', 'id="app" data-server-rendered="true"')
+    // 解决闪屏
+    html = html.replace('id="app"', 'id="app" data-server-rendered="true"')
+  }
   
-  return { html }
+  return { html, renderError }
 }
 
 module.exports = ssr;

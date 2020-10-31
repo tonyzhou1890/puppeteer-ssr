@@ -12,6 +12,7 @@ const cache = new Cacheman('htmls', {
 }) // 缓存
 
 router.get("/*", async (req, res, next) => {
+  console.log(req.originalUrl)
   req._pageConfig = getPageConfig(req)
   // 如果没有相关配置返回错误
   if (!req._pageConfig) {
@@ -24,8 +25,8 @@ router.get("/*", async (req, res, next) => {
   const html = await getCachePage(req, cache)
   // 缓存里有就直接返回
   if (html) {
-    console.log('cache page: ', req._pageConfig.url)
     endRequest(res, {
+      url: req._pageConfig.url,
       html
     })
   } else { // 否则放入渲染等待队列
@@ -108,7 +109,8 @@ function getPageConfig(req) {
       url: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
       version: host.version || '',
       expire: host.expire,
-      proxyHost: host.proxyHost
+      proxyHost: host.proxyHost,
+      waitForNetworkIdleTime: host.waitForNetworkIdleTime === undefined ? 300 : host.waitForNetworkIdleTime, // 默认等待 300 毫秒
     }
     return pageConfig
   } else {
@@ -146,12 +148,16 @@ async function renderPage(request) {
     html,
     ttRenderMs
   })
-  // 尝试缓存
-  setCachePage(request.req, cache, html)
+  // 渲染没有错误，尝试缓存
+  if (result.renderError === false) {
+    setCachePage(request.req, cache, html)
+  }
+  
   // 队列中相同请求一并返回
   requestList = requestList.filter(item => {
     if (item.req._pageConfig.url === pageConfig.url) {
       endRequest(item.res, {
+        url: pageConfig.url,
         html,
         ttRenderMs
       })
@@ -171,7 +177,10 @@ async function renderPage(request) {
  * @param {object} options
  */
 function endRequest(res, options = {}) {
-  console.info(`Headless rendered page in: ${options.ttRenderMs || 0}ms`);
+  if (!options.status || options.status === 200) {
+    console.info(`Headless rendered page ${options.url} in: ${options.ttRenderMs || 0}ms`);
+  }
+  
   const defaultHtml = '<h1>error</h1>'
   // Add Server-Timing! See https://w3c.github.io/server-timing/.
   res.set(

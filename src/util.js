@@ -13,12 +13,15 @@ async function waitForNetworkIdle(page, timeout, maxInflightRequests = 0) {
   let fulfill;
   let promise = new Promise(x => fulfill = x);
   let timeoutId = setTimeout(onTimeoutDone, timeout);
+  console.log(timeout, Date.now())
   return promise;
 
   function onTimeoutDone() {
     page.removeListener('request', onRequestStarted);
     page.removeListener('requestfinished', onRequestFinished);
     page.removeListener('requestfailed', onRequestFinished);
+    
+    console.log(Date.now())
     fulfill();
   }
 
